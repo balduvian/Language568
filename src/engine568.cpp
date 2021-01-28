@@ -15,8 +15,8 @@ ValReturn::ValReturn(int val, int * ref, RegisterValue * reg) : val(val), ref(re
 DirReturn::DirReturn() : dx(0), dy(0) {}
 DirReturn::DirReturn(int dx, int dy) : dx(dx), dy(dy) {}
 
-OpReturn::OpReturn() : unary(false), op(nullptr) {}
-OpReturn::OpReturn(bool unary, std::function<int(int, int)> && op) : unary(unary), op(op) {}
+OpReturn::OpReturn() : unary(false), basicOp(nullptr) {}
+OpReturn::OpReturn(bool unary, BasicOpFunc && basicOp) : unary(unary), basicOp(basicOp) {}
 
 const char * Engine568::colorNames [6] = {
 	"red",
@@ -39,10 +39,7 @@ Engine568::Engine568() :
 	dy(0),
 	lastValue(0),
 	lastRef(nullptr),
-	unary(false),
-	placeOperator(false),
-	shouldAssign(false),
-	lastOperator(nullptr),
+	currentOperator(nullptr),
 	lastReg(nullptr),
 	error("")
 {
@@ -111,14 +108,14 @@ auto Engine568::moveUntil(unsigned int & rgb) -> bool {
 }
 
 auto Engine568::makeErr(std::string && error) -> void {
-	this->error = std::string("ERROR | x: ") + std::to_string(x) + " y: " + std::to_string(y);
+	this->error = std::string("ERROR | x: ") + std::to_string(x) + " y: " + std::to_string(y) + " d: " + directionName(dx, dy);
 
-	if (!outOfBounds()) this->error += " c: " + colorName(getRGB());
+	if (!outOfBounds()) this->error += std::string(" c: ") + colorName(getRGB());
 
 	this->error += " | " + error;
 }
 
-auto Engine568::colorName(unsigned int color) -> std::string {
+auto Engine568::colorName(unsigned int color) -> const char * {
 	auto index = colorIndex(color);
 	return index == -1 ? "unknown" : colorNames[index];
 }
@@ -153,25 +150,21 @@ auto Engine568::assignArray(unsigned int index, unsigned int size) -> std::vecto
 	return backingArray;
 }
 
-auto Engine568::assign(int val, int * ref, RegisterValue * reg) {
-	/* assigning to current register */
-	if (reg != nullptr) {
-		/* can we assign it a register? */
-		if (lastReg != nullptr) {
-			reg->integer = lastReg->integer;
-			reg->array = lastReg->array;
+auto Engine568::basicToOp(BasicOpFunc basicOp) -> OpFunc {
+	return [basicOp](int lastVal, int * lastRef, RegisterValue * lastReg, int currentVal, int * currentRef, RegisterValue * currentReg) {
+		return basicOp(lastVal, currentVal);
+	};
+}
 
-		/* if not only assign value part */
-		} else {
-			reg->integer = lastValue;
-		}
-	/* assigning to current reference if an array element */
-	} else if (ref != nullptr) {
-		*ref = lastValue;
-
-	} else {
-		makeErr("Cannot assign to rvalue");
-	}
+auto Engine568::directionName(int dx, int dy) -> const char * {
+	if (dx < 1)
+		return "left";
+	else if (dx > 1)
+		return "right";
+	else if (dy < 1)
+		return "up";
+	else
+		return "down";
 }
 
 auto Engine568::outOfBoundsError() -> void {
@@ -242,11 +235,10 @@ auto Engine568::parseVal() -> ValReturn {
 				return ValReturn(value, nullptr, nullptr);
 			}
 			case MAGENTA: { /* END 0 */
-				if (value == 1) {
+				if (value == 1)
 					return ValReturn(0, nullptr, nullptr);
-				} else {
-					return makeErr("Invalid Zero end to nonzero value"), ValReturn();
-				}
+				else
+					return makeErr("Unexpected zero end for nonzero value"), ValReturn();
 			}
 		}
 	}
@@ -257,16 +249,16 @@ auto Engine568::parseHeap() -> void {
 	auto rgb = 0u;
 	if (moveUntil(rgb)) return outOfBoundsError();
 
-	auto index = colorIndex(rgb);
+	auto registerIndex = colorIndex(rgb);
 
 	/* next color block is a value, the size of the heap block we are allocating */
-	auto [blockSize, ref, reg_unused] = parseVal();
-	if (hasError()) return makeErr("While parsing heap block size: " + error);
-	if (blockSize < 0) return makeErr("Heap block size cannot be negative");
+	auto [arraySize, ref, reg_unused] = parseVal();
+	if (hasError()) return makeErr(std::string("While parsing array size for register ") + colorNames[registerIndex] + ": " + error);
+	if (arraySize < 0) return makeErr(std::string("Trying to allocate array of negative size (") + std::to_string(arraySize) + ") for register " + colorNames[registerIndex]);
 
 	/* allocate */
-	auto & reg = registers.at(index);
-	auto & backingArray = assignArray(index, blockSize);
+	auto & reg = registers.at(registerIndex);
+	auto & backingArray = assignArray(registerIndex, arraySize);
 	/* 0 out array */
 	for (auto i = 0; i < backingArray.size(); ++i) backingArray[i] = 0;
 
@@ -280,14 +272,14 @@ auto Engine568::parseHeap() -> void {
 				this->dx = dx;
 				this->dy = dy;
 
-				if (hasError()) return makeErr(std::string("While allocating elements for ") + colorNames[index] + ", hit direction: " + error);
+				if (hasError()) return makeErr(std::string("While initializing array elements for register ") + colorNames[registerIndex] + ": " + error);
 				break;
 			}
 			case GREEN: {
-				if (element == blockSize) return makeErr("Trying to allocate more than block size (" + std::to_string(blockSize) + ") for register " + colorNames[index]);
+				if (element == arraySize) return makeErr("Trying to initialize more array elements than array size (" + std::to_string(arraySize) + ") for register " + colorNames[registerIndex]);
 
 				auto [elementVal, elementRef, r_unused2] = parseVal();
-				if (hasError()) return makeErr("While parsing heap block size: " + error);
+				if (hasError()) return makeErr("While parsing array initializer value " + std::to_string(element + 1) + " for register " + colorNames[registerIndex] + ": " + error);
 
 				backingArray[element] = elementVal;
 				++element;
@@ -297,7 +289,7 @@ auto Engine568::parseHeap() -> void {
 				return;
 			}
 			default: {
-				return makeErr("Ran into unexpected " + colorName(rgb) + " while allocating elements for " + colorNames[index]);
+				return makeErr(std::string("Unexpected ") + colorName(rgb) + " while allocating elements for " + colorNames[registerIndex]);
 			}
 		}
 	}
@@ -309,28 +301,28 @@ auto Engine568::parseOperator1() -> OpReturn {
 
 	switch (rgb) {
 		case RED: /* + */
-			return OpReturn(false, [](int last, int current) {
-				return last + current;
+			return OpReturn(false, [](int lastVal, int currentVal) {
+				return lastVal + currentVal;
 			});
 		case YELLOW: /* - */
-			return OpReturn(false, [](int last, int current) {
-				return last - current;
+			return OpReturn(false, [](int lastVal, int currentVal) {
+				return lastVal - currentVal;
 			});
 		case GREEN: /* * */
-			return OpReturn(false, [](int last, int current) {
-				return last * current;
+			return OpReturn(false, [](int lastVal, int currentVal) {
+				return lastVal * currentVal;
 			});
 		case CYAN: /* / */
-			return OpReturn(false, [](int last, int current) {
-				return last / current;
+			return OpReturn(false, [](int lastVal, int currentVal) {
+				return lastVal / currentVal;
 			});
 		case BLUE: /* % */
-			return OpReturn(false, [](int last, int current) {
-				return last % current;
+			return OpReturn(false, [](int lastVal, int currentVal) {
+				return lastVal % currentVal;
 			});
 		case MAGENTA: /* ! */
-			return OpReturn(true, [](int last, int current) {
-				return !last;
+			return OpReturn(true, [](int lastVal, int currentVal) {
+				return !lastVal;
 			});
 	}
 
@@ -341,40 +333,73 @@ auto Engine568::parseOperator2() -> void {
 	auto rgb = 0u;
 	if (moveUntil(rgb)) return outOfBoundsError();
 
-	placeOperator = false;
-
 	switch (rgb) {
 		case RED: /* == */
-			lastOperator = [](int last, int current) {
-				return last == current;
-			};
+			currentOperator = basicToOp([](int lastVal, int currentVal) {
+				return lastVal == currentVal;
+			});
 			break;
 		case YELLOW: /* < */
-			lastOperator = [](int last, int current) {
-				return last < current;
-			};
+			currentOperator = basicToOp([](int lastVal, int currentVal) {
+				return lastVal < currentVal;
+			});
 			break;
 		case GREEN: /* > */
-			lastOperator = [](int last, int current) {
-				return last > current;
-			};
+			currentOperator = basicToOp([](int lastVal, int currentVal) {
+				return lastVal > currentVal;
+			});
 			break;
 		case CYAN: /* print */
 			std::cout << char(lastValue);
 			break;
 		case BLUE: /* assignment */ {
-			lastOperator = nullptr;
-			shouldAssign = true;
+			currentOperator = [this](int lastVal, int * lastRef, RegisterValue * lastReg, int currentVal, int * currentRef, RegisterValue * currentReg) {
+				/* assignment to register */
+				if (currentReg != nullptr) {
+					/* register array pointer copy */
+					if (lastReg != nullptr) {
+						currentReg->integer = lastReg->integer;
+						currentReg->array = lastReg->array;
+
+					/* value to register assignment */
+					} else {
+						currentReg->integer = lastVal;
+					}
+
+				/* assignment to array element */
+				} else if (currentRef != nullptr) {
+					*currentRef = lastVal;
+
+				/* assignment last operand must be to register or to array element */
+				} else {
+					makeErr("Trying to assign to value");
+				}
+
+				return currentVal;
+			};
 			break;
 		}
-		case MAGENTA: /* =modif */ {
-			placeOperator = true;
+		case MAGENTA: /* compound assignment */ {
+			auto [unary, basicOp] = parseOperator1();
+			if (hasError()) return makeErr("While parsing compound assignment operator: " + error);
 
-			auto [unary, op] = parseOperator1();
-			if (hasError()) return makeErr("While parsing combo operator: " + error);
+			if (unary) {
+				*lastRef = basicOp(lastValue, 0);
 
-			if (unary) *lastRef = op(lastValue, 0);
-			else lastOperator = op;
+			} else {
+				auto captureBasicOp = basicOp;
+
+				currentOperator = [captureBasicOp, this](int lastVal, int *lastRef, RegisterValue *lastReg, int currentVal, int *currentRef, RegisterValue *currentReg) {
+					if (currentRef != nullptr) {
+						*currentRef = captureBasicOp(lastVal, currentVal);
+						return *currentRef;
+
+					} else {
+						makeErr("Trying to compound assign to value");
+						return currentVal;
+					}
+				};
+			}
 
 			break;
 		}
@@ -412,16 +437,9 @@ auto Engine568::run() -> void {
 			case GREEN: {
 				auto [val, ref, reg] = parseVal();
 
-				if (shouldAssign) {
-					assign(val, ref, reg);
-
-					shouldAssign = false;
-
-				} else if (lastOperator != nullptr) {
-					val = lastOperator(lastValue, val);
-					if (placeOperator) *ref = val;
-
-					lastOperator = nullptr;
+				if (currentOperator != nullptr) {
+					val = currentOperator(lastValue, lastRef, lastReg, val, ref, reg);
+					currentOperator = nullptr;
 				}
 
 				lastValue = val;
@@ -434,12 +452,10 @@ auto Engine568::run() -> void {
 				parseHeap();
 				break;
 			case BLUE: {
-				placeOperator = false;
-
 				auto [unary, op] = parseOperator1();
 
 				if (unary) *lastRef = op(lastValue, 0);
-				else lastOperator = op;
+				else currentOperator = basicToOp(op);
 
 				break;
 			}
@@ -448,7 +464,7 @@ auto Engine568::run() -> void {
 				break;
 		}
 
-		moveUntil(rgb);
+		if (!hasError()) moveUntil(rgb);
 	}
 }
 

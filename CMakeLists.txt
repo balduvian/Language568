@@ -9,7 +9,7 @@ file(GLOB_RECURSE SOURCES
 	src/*.cpp
 )
 
-add_executable(language568 ${SOURCE_FILES} ${SOURCES})
+add_executable(language568 ${SOURCE_FILES} ${SOURCES} src/engine568Types.h)
 
 include_directories(C:/Users/Emmet/Programming/lib/libpng-1.6.0/include)
 

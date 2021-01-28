@@ -36,13 +36,16 @@ public:
 	int dx, dy;
 };
 
+using BasicOpFunc = std::function<int(int, int)>;
+using OpFunc = std::function<int(int, int *, RegisterValue *, int, int *, RegisterValue *)>;
+
 class OpReturn {
 public:
 	OpReturn();
-	OpReturn(bool, std::function<int(int, int)> &&);
+	OpReturn(bool, BasicOpFunc &&);
 
 	bool unary;
-	std::function<int(int, int)> op;
+	BasicOpFunc basicOp;
 };
 
 class Engine568 {
@@ -71,10 +74,7 @@ private:
 	int * lastRef;
 	RegisterValue * lastReg;
 
-	bool unary;
-	bool placeOperator;
-	bool shouldAssign;
-	std::function<int(int, int)> lastOperator;
+	OpFunc currentOperator;
 
 	std::string error;
 
@@ -82,11 +82,12 @@ private:
 	auto getRGB() -> unsigned int;
 	auto moveUntil(unsigned int &) -> bool;
 	auto makeErr(std::string &&) -> void;
-	auto colorName(unsigned int) -> std::string;
+	auto colorName(unsigned int) -> const char *;
 	auto colorIndex(unsigned int) -> unsigned int;
 	auto hasError() -> bool;
 	auto assignArray(unsigned int, unsigned int) -> std::vector<int> &;
-	auto assign(int, int *, RegisterValue *);
+	auto basicToOp(BasicOpFunc) -> OpFunc;
+	auto directionName(int, int) -> const char *;
 
 	auto outOfBoundsError() -> void;
 
