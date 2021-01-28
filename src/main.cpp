@@ -8,7 +8,7 @@ int main(int argc, char ** argv) {
 		std::cout << "need 1 argument" << std::endl;
 		return 2;
 	}
-	
+
 	auto image = CNGE::Image::fromPNG(argv[1]);
 
 	if (image == nullptr || !image->isValid()) {
@@ -28,7 +28,7 @@ int main(int argc, char ** argv) {
 		std::cout << err << std::endl;
 	}
 
-	std::cout << "Exited at " << engine.getX() << " | " << engine.getY() << std::endl;
+	std::cout << "Exited at " << engine.getX() << ", " << engine.getY() << std::endl;
 
 	return 0;
 }

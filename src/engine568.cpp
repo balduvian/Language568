@@ -181,7 +181,7 @@ auto Engine568::parseDir() -> DirReturn {
 		case YELLOW: return DirReturn(0, -1);
 		case GREEN: return DirReturn(-1, 0);
 		case CYAN: return DirReturn(0, 1);
-		default: return makeErr("Invalid direction signifier"), DirReturn();
+		default: return makeErr(std::string("Unexpected ") + colorName(rgb) + " while parsing direction"), DirReturn();
 	}
 }
 
@@ -384,7 +384,10 @@ auto Engine568::parseOperator2() -> void {
 			if (hasError()) return makeErr("While parsing compound assignment operator: " + error);
 
 			if (unary) {
-				*lastRef = basicOp(lastValue, 0);
+				if (lastRef != nullptr)
+					*lastRef = basicOp(lastValue, 0);
+				else
+					makeErr("Trying to compound assign to value");
 
 			} else {
 				auto captureBasicOp = basicOp;
