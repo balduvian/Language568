@@ -12,8 +12,12 @@ RegisterValue::RegisterValue() : integer(0), array() {}
 ValReturn::ValReturn() : val(0), ref(nullptr), reg(nullptr) {}
 ValReturn::ValReturn(int val, int * ref, RegisterValue * reg) : val(val), ref(ref), reg(reg) {}
 
-DirReturn::DirReturn() : dx(0), dy(0) {}
-DirReturn::DirReturn(int dx, int dy) : dx(dx), dy(dy) {}
+DirReturn::DirReturn() : dx(0), dy(0), color(0) {}
+DirReturn::DirReturn(int dx, int dy, unsigned int color) : dx(dx), dy(dy), color(color) {}
+
+auto DirReturn::isDirection() -> bool {
+	return !(dx == 0 && dy == 0);
+}
 
 OpReturn::OpReturn() : unary(false), basicOp(nullptr) {}
 OpReturn::OpReturn(bool unary, BasicOpFunc && basicOp) : unary(unary), basicOp(basicOp) {}
@@ -108,11 +112,7 @@ auto Engine568::moveUntil(unsigned int & rgb) -> bool {
 }
 
 auto Engine568::makeErr(std::string && error) -> void {
-	this->error = std::string("ERROR | x: ") + std::to_string(x) + " y: " + std::to_string(y) + " d: " + directionName(dx, dy);
-
-	if (!outOfBounds()) this->error += std::string(" c: ") + colorName(getRGB());
-
-	this->error += " | " + error;
+	this->error = error;
 }
 
 auto Engine568::colorName(unsigned int color) -> const char * {
@@ -167,8 +167,26 @@ auto Engine568::directionName(int dx, int dy) -> const char * {
 		return "down";
 }
 
+/**
+ * sets execution direction based on a direction return
+ *
+ * @return true if the direction could not be set
+ */
+auto Engine568::setDirection(DirReturn & dirReturn) -> bool {
+	if (!hasError() && dirReturn.isDirection()) {
+		dx = dirReturn.dx;
+		dy = dirReturn.dy;
+		return false;
+
+	} else return true;
+}
+
 auto Engine568::outOfBoundsError() -> void {
 	makeErr("Out of bounds");
+}
+
+auto Engine568::invalidDirectionError(std::string && base) -> void {
+	makeErr(base + "Invalid direction");
 }
 
 auto Engine568::parseDir() -> DirReturn {
@@ -177,20 +195,75 @@ auto Engine568::parseDir() -> DirReturn {
 	if (moveUntil(rgb)) return outOfBoundsError(), DirReturn();
 
 	switch (rgb) {
-		case RED: return DirReturn(1, 0);
-		case YELLOW: return DirReturn(0, -1);
-		case GREEN: return DirReturn(-1, 0);
-		case CYAN: return DirReturn(0, 1);
-		default: return makeErr(std::string("Unexpected ") + colorName(rgb) + " while parsing direction"), DirReturn();
+		case RED: return DirReturn(1, 0, rgb);
+		case YELLOW: return DirReturn(0, -1, rgb);
+		case GREEN: return DirReturn(-1, 0, rgb);
+		case CYAN: return DirReturn(0, 1, rgb);
+		default: return DirReturn(0, 0, rgb);
 	}
 }
 
 auto Engine568::parseBranch() -> void {
-	auto [dx, dy] = parseDir();
+	auto dirReturn = parseDir();
 
-	if (lastValue) {
-		this->dx = dx;
-		this->dy = dy;
+	/* for blue, a switch statement */
+	if (dirReturn.color == BLUE) {
+		auto inSwitch = true;
+
+		while (inSwitch) {
+			auto rgb = 0u;
+			if (moveUntil(rgb)) return makeErr("While parsing switch: " + error);
+
+			switch (rgb) {
+				/* can change direction mid switch statement */
+				case RED: {
+					dirReturn = parseDir();
+					if (setDirection(dirReturn)) invalidDirectionError("While parsing switch: ");
+
+					break;
+				}
+				/* value, followed by a direction is a case */
+				case GREEN: {
+					auto [val, ref, reg] = parseVal();
+					if (hasError()) return makeErr("while parsing switch case: " + error);
+
+					auto dirReturn = parseDir();
+					if (hasError()) return makeErr("while parsing switch case direction: " + error);
+					if (!dirReturn.isDirection()) return invalidDirectionError("while parsing switch case direction: ");
+
+					/* change direction on switch case equality */
+					/* exit out of switch */
+					if (val == lastValue) {
+						setDirection(dirReturn);
+						inSwitch = false;
+					}
+
+					break;
+				}
+				/* default for switch statements */
+				case CYAN: {
+					auto dirReturn = parseDir();
+					if (setDirection(dirReturn)) invalidDirectionError("while parsing switch default case: ");
+
+					/* exit out of switch */
+					inSwitch = false;
+					break;
+				}
+				/* switch statement ends */
+				case BLUE: {
+					inSwitch = false;
+					break;
+				}
+				default: return makeErr(std::string("Unexpected ") + colorName(rgb) + " while parsing switch");
+			}
+		}
+
+	/* for normal directions, just an if statement */
+	} else if (dirReturn.isDirection()) {
+		if (lastValue) setDirection(dirReturn);
+
+	} else {
+		invalidDirectionError("While parsing switch: ");
 	}
 }
 
@@ -268,11 +341,9 @@ auto Engine568::parseHeap() -> void {
 
 		switch (rgb) {
 			case RED: {
-				auto [dx, dy] = parseDir();
-				this->dx = dx;
-				this->dy = dy;
+				auto dirReturn = parseDir();
+				if (setDirection(dirReturn)) return invalidDirectionError("While initializing array elements for register: ");
 
-				if (hasError()) return makeErr(std::string("While initializing array elements for register ") + colorNames[registerIndex] + ": " + error);
 				break;
 			}
 			case GREEN: {
@@ -429,9 +500,9 @@ auto Engine568::run() -> void {
 	while (!outOfBounds() && !hasError()) {
 		switch (rgb) {
 			case RED: {
-				auto [dx, dy] = parseDir();
-				this->dx = dx;
-				this->dy = dy;
+				auto dirReturn = parseDir();
+				if (setDirection(dirReturn)) invalidDirectionError("");
+
 				break;
 			}
 			case YELLOW:
@@ -479,8 +550,19 @@ auto Engine568::getArray(unsigned int index) -> std::vector<int> & {
 	return arrays.at(index);
 }
 
-auto Engine568::getError() -> char * {
-	return error.empty() ? nullptr : error.data();
+auto Engine568::getError() -> std::string {
+	if (error.empty()) {
+		return "";
+
+	} else {
+		auto ret = std::string("ERROR | x: ") + std::to_string(x) + " y: " + std::to_string(y) + " d: " + directionName(dx, dy);
+
+		if (!outOfBounds()) ret += std::string(" c: ") + colorName(getRGB());
+
+		ret += " | " + error;
+
+		return ret;
+	}
 }
 
 auto Engine568::getX() -> int {

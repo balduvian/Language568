@@ -19,14 +19,12 @@ int main(int argc, char ** argv) {
 	auto engine = Engine568();
 	engine.load(image->getWidth(), image->getHeight(), image->getPixels());
 
-	engine.pushInt(7);
+	engine.pushInt(5);
 	engine.run();
 	std::cout << std::endl;
 
 	auto err = engine.getError();
-	if (err != nullptr) {
-		std::cout << err << std::endl;
-	}
+	if (!err.empty()) std::cout << err << std::endl;
 
 	std::cout << "Exited at " << engine.getX() << ", " << engine.getY() << std::endl;
 

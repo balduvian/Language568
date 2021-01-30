@@ -31,9 +31,12 @@ public:
 class DirReturn {
 public:
 	DirReturn();
-	DirReturn(int, int);
+	DirReturn(int, int, unsigned int);
+
+	auto isDirection() -> bool;
 
 	int dx, dy;
+	unsigned int color;
 };
 
 using BasicOpFunc = std::function<int(int, int)>;
@@ -88,8 +91,10 @@ private:
 	auto assignArray(unsigned int, unsigned int) -> std::vector<int> &;
 	auto basicToOp(BasicOpFunc) -> OpFunc;
 	auto directionName(int, int) -> const char *;
+	auto setDirection(DirReturn &) -> bool;
 
 	auto outOfBoundsError() -> void;
+	auto invalidDirectionError(std::string &&) -> void;
 
 	auto parseDir() -> DirReturn;
 	auto parseBranch() -> void;
@@ -111,7 +116,7 @@ public:
 	auto getInt(unsigned int) -> int;
 	auto getArray(unsigned int) -> std::vector<int> &;
 
-	auto getError() -> char *;
+	auto getError() -> std::string;
 
 	auto getX() -> int;
 	auto getY() -> int;
